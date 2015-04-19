@@ -1,4 +1,4 @@
-This is part 1 of a series of blog posts about WSGI, Websockets, HTTP2, and what using python on the web is going to look like in the future. This section is a breakdown of the WSGI specification, how it works and what it looks like.
+This is part 1 of a series of blog posts about WSGI, Websockets, HTTP2, and what using python on the web is going to look like in the future. This section is a breakdown of the WSGI spec, how it works and what it looks like.
 
 ## What is WSGI?
 
@@ -14,13 +14,15 @@ The rest of this post is the breakdown of how exactly each side of the interface
 
 WSGI is the product of [PEP 3333][2] proposing "a simple and universal interface between web servers and web applications or frameworks", and goes on to document how the WSGI interface works, how it should behave, what data should be available to the application, and how the application can create the response for the client.
 
-The "Rationale and Goals" section of the PEP is quite interesting, it references Java's servlet API as a point of inspiration and, quite rightly, points out that at the time (September 2010) developing web application in python was a massive headache to get started with and make the best choices without backing yourself into a nasty corner.
+The "Rationale and Goals" section of the PEP is quite interesting, it references Java's servlet API as a point of inspiration and, quite rightly, points out that at the time (September 2010) developing web applications in python was quite a headache to get started with and make the best choices without backing yourself into a nasty corner.
 
-The core of WSGI is incredibly simple. It was even one of the main goals of the specification, "since no existing servers or frameworks support WSGI ... WSGI must be easy to implement", this was to ensure that the overheads of adding WSGI to the existing systems at the time were as low as possible.
+Simplicity was one of the main goals of the spec "since no existing servers or frameworks support WSGI ... WSGI must be easy to implement", this was to ensure that the overheads of adding WSGI to the existing systems at the time were as low as possible.
+
+There are three main components to the workings of WSGI:
 
 ### The Environment
 
-The environment is a dict of CGI and WSGI variables. It's all the juciey and important details of the request, the variables that allow us to implement route based redirection, read data from forms and post requests, as well as all the headers from the client.  Outside of the actual CGI variables there's not much else that's interesting about the environment, there are some specified WSGI variables that must be present or accounted for, but primarily the environment is the familiar set of `HOST_NAME`, `REQUEST_METHOD` etc. collection of CGI variables.
+The environment is a dictionary of CGI, WSGI, and extra `HTTP_*` variables. It's all the juciey and important details of the request, the variables that allow us to implement route based internal redirection, read data from forms and post requests, as well as all the headers from the client.  Outside of the actual CGI variables there's not much else that's interesting about the environment, there are some specified WSGI variables that must be present or accounted for, but primarily the environment is the familiar set of `HOST_NAME`, `REQUEST_METHOD` etc. collection of CGI variables.
 
 ### The Callback
 
@@ -97,7 +99,7 @@ If you fire up a WSGI server and checkout the output of this client, it might be
 
 Full code for the server is [here](https://github.com/nathschmidt/blog-python-wsgi/blob/master/code/server.py), but the important parts are below.
 
-The server uses the Python3 asyncio module to handle the actual TCP connections, and reading from/writing to the client. So we can then focus on the implementation of WSGI, rather than worrying too much about our tcp situation.
+The server uses the Python3 asyncio module to handle the actual TCP connections, and reading from/writing to the client. So we can then focus on the implementation of WSGI.
 
     class WsgiServer(asyncio.Protocol):
     
