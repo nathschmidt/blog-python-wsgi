@@ -10,6 +10,66 @@ The server side of things is slightly more complex, but fundamentally simple. Es
 
 The rest of this post is the breakdown of how exactly each side of the interface goes about doing what it is supposed to, as well as an overall look into how WSGI works.
 
+## The Design of WSGI
+
+WSGI is the product of [PEP 3333][2] proposing "a simple and universal interface between web servers and web applications or frameworks", and goes on to document how the WSGI interface works, how it should behave, what data should be available to the application, and how the application can create the response for the client.
+
+The "Rationale and Goals" section of the PEP is quite interesting, it references Java's servlet API as a point of inspiration and, quite rightly, points out that at the time (September 2010) developing web application in python was a massive headache to get started with and make the best choices without backing yourself into a nasty corner.
+
+The core of WSGI is incredibly simple. It was even one of the main goals of the specification, "since no existing servers or frameworks support WSGI ... WSGI must be easy to implement", this was to ensure that the overheads of adding WSGI to the existing systems at the time were as low as possible.
+
+### The Environment
+
+The environment is a dict of CGI and WSGI variables. It's all the juciey and important details of the request, the variables that allow us to implement route based redirection, read data from forms and post requests, as well as all the headers from the client.  Outside of the actual CGI variables there's not much else that's interesting about the environment, there are some specified WSGI variables that must be present or accounted for, but primarily the environment is the familiar set of `HOST_NAME`, `REQUEST_METHOD` etc. collection of CGI variables.
+
+### The Callback
+
+In python we can take any class and add function-esk behaviour to it simply by defining the behaviour to take place when that object is treated like a function. Bit easier to explain in code:
+
+    class Foo(object):
+    
+        def __call__(self, *args):
+            print " ".join(args)
+    
+    >>> foo = Foo
+    >>> foo("Some". "list of", "arguments.")
+    Some list of arguments.
+    
+
+The WSGI PEP takes this into account when it defines the rules around what can happen with regard to the callable. The PEP explicitly states we can't care about the details of the callable, as far as our application is concerned it is *only* callable; we can't depend on any other behaviour, method, or data.
+
+Ok, that said, onto the nice meaty parts of the Callback.
+
+The callback is officially called `start_response`, it accepts 2 positional arguments, `status` and `response_headers`, and a keyword argument, `exc_info`. To quote the spec:
+
+*   `status` - is a HTTP status string. eg. "200 OK", "404 Not Found".
+*   `response_headers` - is a list of tuples of the form (`header_name`, `header_value`).
+*   `exc_info` - Exception information if something has gone wrong, defaults to `None`.
+
+`status` is by far the simplest of all the arguements, it is simply a valid HTTP status string as per [RFC 2616][3]. Really it just has to be a status code and reason separated by a single space. Anything other than that may be rejected by the server. Very flexible and simple way of communicating if the request has succeeded or failed, a decision that is of course left up to the application.
+
+The `response_headers` arguement is slightly more complicated (though still very simple), it's only real requirementthat it is a list, containing tuples of `header_name` and `header_value`. Of course, as they are tuples the order is important. Just like the `status` argument the `header_value` field for each header shouldn't contain any control characters or other strangeness. `header_name` must be a valid HTTP header field-name, also defined in [RFC 2616][3].
+
+Things will start to get interesting for us though, if we try and set a `Date` header, for instance. The spec actually allows the server to do whatever it wants to do to the out going header fields, meaning it's perfectly within its rights to say, override our custom `Date` header value with a more accurate header value. In practice probably not a great idea to try setting the `Date` header regardless, it is definitely something the outgoing machine should serice. It's a good example of the behaviour though, and a bit of a warning why you should never assume your client will definitely get unmolested headers.
+
+The final argument to our response is the `exc_info` named parameter, for when things go pear shaped. The designers of the WSGI realized that setting the headers and returning some result are disconnected from each other. Meaning it's entirely possible for an application to set the headers and status field before generating the response. So, what if our application set the headers and status field, but then later down the line raises an exception. There are an infinite number of conditions that could cause something like this to happen, eg a database connection fails, a catastrophic event should definitely change the way a response is returned to the client. For example, Instead of a 2xx status code, they should probably see a 5xx or 4xx status code.
+
+So our server has to be able to handle our `start_response` function being called more than once, so long as the `exc_info` argument is present, our server will happily overwrite the previously specified headers and status, our returned result is treated as the body for the request. So, our application shouldn't just let exceptions propagate to the server, we need to catch them in our application and display or return something helpful. What helpful means is entirely up to the application.
+
+### The Response
+
+The body of the response is formed from the returned value of the `application`. As with the callback function, so long as the application is callable (i.e. has a `__call__` method) it can be used. The return value is expected to be an iterable, with each value from the iteration added to the body of the response. Eg:
+
+    # Prepare our response body
+    for data in result:
+        response += data
+    
+    # Write the response to the client
+    self.transport.write(response)
+    
+
+More complex servers don't worry too much about this rule, but, particlarly in Python3's case, the values of the iterable are expected to be byte array's. This is because HTTP is primarily concerned with bytes rather than unicode text. Now on to the final question, why does the response have to be iterable? Because iterables are incredibly flexible, and the common interface for strings, files, lists, etc. So you can very easily wrap all manor of behaviour up in an iterator.
+
 ## Onto the code
 
 All of this code is available in full from my [github account][1], some of the examples below have been condensed for brevity.
@@ -159,66 +219,6 @@ The server uses the Python3 asyncio module to handle the actual TCP connections,
     
 
 That is essentially all we really need in order to understand what's happening. To break it down a bit, the `wsgi` function is the heart of running the core `application` function, we give it the details it needs to make some decisions, set our status code and headers, then take it's result and return that to the client.
-
-## The Design of WSGI
-
-WSGI is the product of [PEP 3333][2] proposing "a simple and universal interface between web servers and web applications or frameworks", and goes on to document how the WSGI interface works, how it should behave, what data should be available to the application, and how the application can create the response for the client.
-
-The "Rationale and Goals" section of the PEP is quite interesting, it references Java's servlet API as a point of inspiration and, quite rightly, points out that at the time (September 2010) developing web application in python was a massive headache to get started with and make the best choices without backing yourself into a nasty corner.
-
-The core of WSGI is incredibly simple. It was even one of the main goals of the specification, "since no existing servers or frameworks support WSGI ... WSGI must be easy to implement", this was to ensure that the overheads of adding WSGI to the existing systems at the time were as low as possible.
-
-### The Environment
-
-The environment is a dict of CGI and WSGI variables. It's all the juciey and important details of the request, the variables that allow us to implement route based redirection, read data from forms and post requests, as well as all the headers from the client.  Outside of the actual CGI variables there's not much else that's interesting about the environment, there are some specified WSGI variables that must be present or accounted for, but primarily the environment is the familiar set of `HOST_NAME`, `REQUEST_METHOD` etc. collection of CGI variables.
-
-### The Callback
-
-In python we can take any class and add function-esk behaviour to it simply by defining the behaviour to take place when that object is treated like a function. Bit easier to explain in code:
-
-    class Foo(object):
-    
-        def __call__(self, *args):
-            print " ".join(args)
-    
-    >>> foo = Foo
-    >>> foo("Some". "list of", "arguments.")
-    Some list of arguments.
-    
-
-The WSGI PEP takes this into account when it defines the rules around what can happen with regard to the callable. The PEP explicitly states we can't care about the details of the callable, as far as our application is concerned it is *only* callable; we can't depend on any other behaviour, method, or data.
-
-Ok, that said, onto the nice meaty parts of the Callback.
-
-The callback is officially called `start_response`, it accepts 2 positional arguments, `status` and `response_headers`, and a keyword argument, `exc_info`. To quote the spec:
-
-*   `status` - is a HTTP status string. eg. "200 OK", "404 Not Found".
-*   `response_headers` - is a list of tuples of the form (`header_name`, `header_value`).
-*   `exc_info` - Exception information if something has gone wrong, defaults to `None`.
-
-`status` is by far the simplest of all the arguements, it is simply a valid HTTP status string as per [RFC 2616][3]. Really it just has to be a status code and reason separated by a single space. Anything other than that may be rejected by the server. Very flexible and simple way of communicating if the request has succeeded or failed, a decision that is of course left up to the application.
-
-The `response_headers` arguement is slightly more complicated (though still very simple), it's only real requirementthat it is a list, containing tuples of `header_name` and `header_value`. Of course, as they are tuples the order is important. Just like the `status` argument the `header_value` field for each header shouldn't contain any control characters or other strangeness. `header_name` must be a valid HTTP header field-name, also defined in [RFC 2616][3].
-
-Things will start to get interesting for us though, if we try and set a `Date` header, for instance. The spec actually allows the server to do whatever it wants to do to the out going header fields, meaning it's perfectly within its rights to say, override our custom `Date` header value with a more accurate header value. In practice probably not a great idea to try setting the `Date` header regardless, it is definitely something the outgoing machine should serice. It's a good example of the behaviour though, and a bit of a warning why you should never assume your client will definitely get unmolested headers.
-
-The final argument to our response is the `exc_info` named parameter, for when things go pear shaped. The designers of the WSGI realized that setting the headers and returning some result are disconnected from each other. Meaning it's entirely possible for an application to set the headers and status field before generating the response. So, what if our application set the headers and status field, but then later down the line raises an exception. There are an infinite number of conditions that could cause something like this to happen, eg a database connection fails, a catastrophic event should definitely change the way a response is returned to the client. For example, Instead of a 2xx status code, they should probably see a 5xx or 4xx status code.
-
-So our server has to be able to handle our `start_response` function being called more than once, so long as the `exc_info` argument is present, our server will happily overwrite the previously specified headers and status, our returned result is treated as the body for the request. So, our application shouldn't just let exceptions propagate to the server, we need to catch them in our application and display or return something helpful. What helpful means is entirely up to the application.
-
-### The Response
-
-The body of the response is formed from the returned value of the `application`. As with the callback function, so long as the application is callable (i.e. has a `__call__` method) it can be used. The return value is expected to be an iterable, with each value from the iteration added to the body of the response. Eg:
-
-    # Prepare our response body
-    for data in result:
-        response += data
-    
-    # Write the response to the client
-    self.transport.write(response)
-    
-
-More complex servers don't worry too much about this rule, but, particlarly in Python3's case, the values of the iterable are expected to be byte array's. This is because HTTP is primarily concerned with bytes rather than unicode text. Now on to the final question, why does the response have to be iterable? Because iterables are incredibly flexible, and the common interface for strings, files, lists, etc. So you can very easily wrap all manor of behaviour up in an iterator.
 
 ## Summary
 
