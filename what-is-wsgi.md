@@ -35,7 +35,7 @@ If you fire up a WSGI server and checkout the output of this client, it might be
 
 ### The Server
 
-Full code for the server is here [github account][1], but the important parts are below.
+Full code for the server is [here](https://github.com/nathschmidt/blog-python-wsgi/blob/master/code/server.py), but the important parts are below.
 
 The server uses the Python3 asyncio module to handle the actual TCP connections, and reading from/writing to the client. So we can then focus on the implementation of WSGI, rather than worrying too much about our tcp situation.
 
